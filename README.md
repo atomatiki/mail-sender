@@ -20,7 +20,7 @@ A simple email sending service built with Rust, Axum, and Lettre.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/mail-sender.git
+git clone https://github.com/atomatiki/mail-sender.git
 cd mail-sender
 
 # Build the project
