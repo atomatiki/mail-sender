@@ -72,7 +72,4 @@ jobs:
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache
           cache-to: |
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache
-          platforms: linux/amd64,linux/arm64
-          provenance: true
-          sbom: true
 
