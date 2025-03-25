@@ -1,0 +1,15 @@
+[package]
+name = "mail-sender"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.32.0", features = ["full"] }
+tower = "0.5.2"
+lettre = { version = "0.11.15", features = ["tokio1", "tokio1-native-tls"] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+http = "1.3.1"
