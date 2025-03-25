@@ -4,7 +4,7 @@ A simple email sending service built with Rust, Axum, and Lettre.
 
 ## Features
 
-- HTTP API listening on port 5000
+- HTTP API listening on port 4500
 - SMTP configuration provided per request
 - Batch email sending
 - Support for both plain text and HTML emails
@@ -44,7 +44,6 @@ The server will start listening on port 5000.
 {
   "smtp_config": {
     "server": "smtp.example.com",
-    "port": 587,
     "username": "your-username",
     "password": "your-password",
     "from_email": "sender@example.com",

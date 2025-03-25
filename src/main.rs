@@ -13,20 +13,35 @@ use lettre::{
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, str::FromStr};
 use axum::routing::get;
-use tracing::{error, info};
+use tracing::info;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
 async fn main() {
+    dotenv::dotenv().ok();
+
     // Initialize tracing
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
+        ))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     // Build our application with a single route
     let app = Router::new()
         .route("/send-emails", post(send_emails_handler))
         .route("/health", get(|| async { (StatusCode::OK, "OK") }));
 
+    // Get the port to listen on
+    let port = std::env::var("PORT")
+        .unwrap_or_else(|_| "4500".to_string())
+        .parse::<u16>()
+        .expect("Invalid port");
+
     // Run it
-    let addr = SocketAddr::from(([0, 0, 0, 0], 5000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr.clone()).await.expect("Failed to bind address");
 
     info!("Listening on {}", addr.clone());
@@ -47,7 +62,6 @@ struct EmailRequest {
 #[derive(Debug, Deserialize)]
 struct SmtpConfig {
     server: String,
-    port: u16,
     username: String,
     password: String,
     from_email: String,
@@ -136,7 +150,6 @@ async fn create_smtp_transport(
 
     let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(&config.server)
         .map_err(|e| format!("Failed to create SMTP relay: {}", e))?
-        .port(config.port)
         .credentials(creds)
         .build();
 
@@ -165,7 +178,7 @@ async fn send_email(
         .map_err(|e| format!("Invalid to address: {}", e))?;
 
     // Create message builder
-    let mut message_builder = Message::builder()
+    let message_builder = Message::builder()
         .from(from)
         .to(to)
         .subject(&email.subject);
