@@ -20,7 +20,8 @@ RUN mkdir -p src && \
 RUN cargo build --release
 
 # Remove the dummy source
-RUN rm src/main.rs
+RUN rm ./target/release/deps/mail_sender* && \
+    rm src/main.rs
 
 # Now copy the real source code
 COPY src src/
