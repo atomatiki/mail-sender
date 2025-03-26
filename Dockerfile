@@ -12,9 +12,6 @@ WORKDIR /app
 # Copy Cargo.toml and Cargo.lock files
 COPY Cargo.toml Cargo.lock* ./
 
-# If you have a workspace with multiple crates, uncomment and adjust these lines
-# COPY common /app/common
-
 # Create a dummy main.rs for dependency caching
 RUN mkdir -p src && \
     echo "fn main() {}" > src/main.rs
@@ -42,9 +39,6 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/target/release/mail-sender .
-
-# Copy any additional runtime files if needed
-# COPY .env ./
 
 # Set environment variables
 ENV RUST_LOG=info

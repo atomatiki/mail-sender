@@ -1,10 +1,5 @@
-use axum::{
-    extract::Json,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::post,
-    Router,
-};
+use axum::routing::get;
+use axum::{extract::Json, http::StatusCode, response::IntoResponse, routing::post, Router};
 use lettre::{
     message::{header::ContentType, Mailbox},
     transport::smtp::authentication::Credentials,
@@ -12,7 +7,6 @@ use lettre::{
 };
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, str::FromStr};
-use axum::routing::get;
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -42,14 +36,18 @@ async fn main() {
 
     // Run it
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = tokio::net::TcpListener::bind(addr.clone()).await.expect("Failed to bind address");
+    let listener = tokio::net::TcpListener::bind(addr.clone())
+        .await
+        .expect("Failed to bind address");
 
     info!("Listening on {}", addr.clone());
 
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
-    ).await.expect("Failed to run server");
+    )
+    .await
+    .expect("Failed to run server");
 }
 
 // Request model
@@ -87,9 +85,7 @@ struct EmailResponse {
 }
 
 // Handler function
-async fn send_emails_handler(
-    Json(payload): Json<EmailRequest>,
-) -> impl IntoResponse {
+async fn send_emails_handler(Json(payload): Json<EmailRequest>) -> impl IntoResponse {
     // Create SMTP transport
     let smtp_transport = match create_smtp_transport(&payload.smtp_config).await {
         Ok(transport) => transport,
@@ -118,7 +114,10 @@ async fn send_emails_handler(
             }
             Err(err) => {
                 failed_count += 1;
-                errors.push(format!("Failed to send email to {}: {}", email.to_email, err));
+                errors.push(format!(
+                    "Failed to send email to {}: {}",
+                    email.to_email, err
+                ));
             }
         }
     }
@@ -167,21 +166,16 @@ async fn send_email(
         Some(name) => format!("{} <{}>", name, smtp_config.from_email),
         None => smtp_config.from_email.clone(),
     };
-    let from = Mailbox::from_str(&from)
-        .map_err(|e| format!("Invalid from address: {}", e))?;
+    let from = Mailbox::from_str(&from).map_err(|e| format!("Invalid from address: {}", e))?;
 
     let to = match &email.to_name {
         Some(name) => format!("{} <{}>", name, email.to_email),
         None => email.to_email.clone(),
     };
-    let to = Mailbox::from_str(&to)
-        .map_err(|e| format!("Invalid to address: {}", e))?;
+    let to = Mailbox::from_str(&to).map_err(|e| format!("Invalid to address: {}", e))?;
 
     // Create message builder
-    let message_builder = Message::builder()
-        .from(from)
-        .to(to)
-        .subject(&email.subject);
+    let message_builder = Message::builder().from(from).to(to).subject(&email.subject);
 
     // Build the message with plain text or HTML content
     let message = if let Some(html) = &email.html_body {
