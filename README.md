@@ -1,5 +1,7 @@
 # Rust Mail Sender Service
 
+Use here: https://mail-sender.atomatiki.app
+
 A simple email sending service built with Rust, Axum, and Lettre.
 
 ## Features
