@@ -1,0 +1,15 @@
+services:
+
+  mail-sender:
+    image: ghcr.io/atomatiki/mail-sender:latest
+    restart: always
+    networks:
+      - traefik_network
+    labels:
+      - "traefik.docker.network=traefik_network"
+      - "traefik.enable=true"
+      - "traefik.http.routers.api-gateway.entrypoints=websecure"
+      - "traefik.http.routers.api-gateway.rule=Host(`mail-sender.atomatiki.app`)"
+      - "traefik.http.routers.api-gateway.tls=true"
+      - "traefik.http.routers.api-gateway.tls.certresolver=production"
+
