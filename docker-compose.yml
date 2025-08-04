@@ -13,3 +13,7 @@ services:
       - "traefik.http.routers.api-gateway.tls=true"
       - "traefik.http.routers.api-gateway.tls.certresolver=production"
 
+networks:
+  traefik_network:
+    external: true
+
