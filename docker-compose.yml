@@ -2,6 +2,7 @@ services:
 
   mail-sender:
     image: ghcr.io/atomatiki/mail-sender:latest
+    container_name: mail-sender
     restart: always
     networks:
       - traefik_network
