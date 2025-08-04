@@ -8,10 +8,10 @@ services:
     labels:
       - "traefik.docker.network=traefik_network"
       - "traefik.enable=true"
-      - "traefik.http.routers.api-gateway.entrypoints=websecure"
-      - "traefik.http.routers.api-gateway.rule=Host(`mail-sender.atomatiki.app`)"
-      - "traefik.http.routers.api-gateway.tls=true"
-      - "traefik.http.routers.api-gateway.tls.certresolver=production"
+      - "traefik.http.routers.mail-sender.entrypoints=websecure"
+      - "traefik.http.routers.mail-sender.rule=Host(`mail-sender.atomatiki.app`)"
+      - "traefik.http.routers.mail-sender.tls=true"
+      - "traefik.http.routers.mail-sender.tls.certresolver=production"
 
 networks:
   traefik_network:
