@@ -1,7 +1,7 @@
 services:
 
   mail-sender:
-    image: ghcr.io/atomatiki/mail-sender:latest
+    image: ghcr.io/atomatiki/mail-sender:main
     container_name: mail-sender
     restart: always
     networks:
@@ -13,6 +13,18 @@ services:
       - "traefik.http.routers.mail-sender.rule=Host(`mail-sender.atomatiki.app`)"
       - "traefik.http.routers.mail-sender.tls=true"
       - "traefik.http.routers.mail-sender.tls.certresolver=production"
+    ports:
+      - "1025:1025"
+    environment:
+      - ENABLE_SMTP_GATEWAY=${ENABLE_SMTP_GATEWAY}
+      - PORT=${PORT}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - RUST_LOG=${RUST_LOG}
+      - TARGET_SMTP_SERVER=${TARGET_SMTP_SERVER}
+      - TARGET_SMTP_USERNAME=${TARGET_SMTP_USERNAME}
+      - TARGET_SMTP_PASSWORD=${TARGET_SMTP_PASSWORD}
+      - TARGET_SMTP_FROM_NAME=${TARGET_SMTP_FROM_NAME}
 
 networks:
   traefik_network:
