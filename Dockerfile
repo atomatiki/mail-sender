@@ -19,8 +19,8 @@ RUN mkdir -p src && \
 # Build dependencies only - this is the caching Docker layer
 RUN cargo build --release
 
-# Remove the dummy source
-RUN rm ./target/release/deps/mail_sender* && \
+# Remove the dummy source (updated binary name)
+RUN rm ./target/release/deps/email_service* && \
     rm src/main.rs
 
 # Now copy the real source code
@@ -28,7 +28,7 @@ COPY src src/
 
 # Build the real application
 RUN cargo build --release && \
-    strip /app/target/release/mail-sender
+    strip /app/target/release/email-service
 
 # Runtime stage using distroless
 FROM gcr.io/distroless/cc-debian12
@@ -38,14 +38,17 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 WORKDIR /app
 
-# Copy binary from builder
-COPY --from=builder /app/target/release/mail-sender .
+# Copy binary from builder (updated binary name)
+COPY --from=builder /app/target/release/email-service .
 
-# Set environment variables
+# Set default environment variables
 ENV RUST_LOG=info
 ENV PORT=4500
+ENV SMTP_PORT=1025
+ENV SMTP_HOST=0.0.0.0
+ENV ENABLE_SMTP_GATEWAY=false
 
-# Expose port - match the port specified in the ENV
-EXPOSE 4500
+# Expose both HTTP API and SMTP gateway ports
+EXPOSE 4500 1025
 
-ENTRYPOINT ["./mail-sender"]
+ENTRYPOINT ["./email-service"]

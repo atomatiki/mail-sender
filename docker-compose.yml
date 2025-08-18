@@ -6,6 +6,9 @@ services:
     restart: always
     networks:
       - traefik_network
+    ports:
+      - "4500:4500"
+      - "1025:1025"
     labels:
       - "traefik.docker.network=traefik_network"
       - "traefik.enable=true"
