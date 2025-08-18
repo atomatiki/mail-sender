@@ -346,12 +346,18 @@ fn send_smtp_email(session: &SmtpSession) -> Result<(), String> {
 
         // Send to each recipient using your existing function
         for to_email in &session.to {
+            let (text_body, html_body) = if body.trim_start().starts_with("<") || body.contains("<html") {
+                (strip_html_tags(&body), Some(body.clone()))
+            } else {
+                (body.clone(), None)
+            };
+            
             let email_message = EmailMessage {
                 to_email: to_email.clone(),
                 to_name: None,
                 subject: subject.clone(),
-                text_body: body.clone(),
-                html_body: None,
+                text_body,
+                html_body,
             };
 
             send_email(&smtp_transport, &smtp_config, &email_message).await?;
@@ -360,6 +366,23 @@ fn send_smtp_email(session: &SmtpSession) -> Result<(), String> {
         
         Ok::<(), String>(())
     })
+}
+
+fn strip_html_tags(html: &str) -> String {
+    // Simple HTML tag removal for plain text fallback
+    let mut result = String::new();
+    let mut inside_tag = false;
+    
+    for c in html.chars() {
+        match c {
+            '<' => inside_tag = true,
+            '>' => inside_tag = false,
+            _ if !inside_tag => result.push(c),
+            _ => {}
+        }
+    }
+    
+    result.trim().to_string()
 }
 
 fn parse_email_data(data: &str) -> (String, String) {
