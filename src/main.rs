@@ -346,21 +346,28 @@ fn send_smtp_email(session: &SmtpSession) -> Result<(), String> {
 
         // Send to each recipient using your existing function
         for to_email in &session.to {
-            let (text_body, html_body) = if body.trim_start().starts_with("<") || body.contains("<html") {
-                (strip_html_tags(&body), Some(body.clone()))
+            // Check if this is already a MIME multipart message
+            if body.contains("------=_Part_") || body.contains("Content-Type: text/") {
+                // This is already a properly formatted MIME message, send it directly
+                send_raw_email(&smtp_transport, &smtp_config, to_email, &subject, &body).await?;
             } else {
-                (body.clone(), None)
-            };
-            
-            let email_message = EmailMessage {
-                to_email: to_email.clone(),
-                to_name: None,
-                subject: subject.clone(),
-                text_body,
-                html_body,
-            };
+                // This is plain content, use the normal email processing
+                let (text_body, html_body) = if body.trim_start().starts_with("<") || body.contains("<html") {
+                    (strip_html_tags(&body), Some(body.clone()))
+                } else {
+                    (body.clone(), None)
+                };
+                
+                let email_message = EmailMessage {
+                    to_email: to_email.clone(),
+                    to_name: None,
+                    subject: subject.clone(),
+                    text_body,
+                    html_body,
+                };
 
-            send_email(&smtp_transport, &smtp_config, &email_message).await?;
+                send_email(&smtp_transport, &smtp_config, &email_message).await?;
+            }
             info!("📧 Email sent to {} via {}", to_email, smtp_config.server);
         }
         
@@ -516,6 +523,40 @@ async fn create_smtp_transport(
         .build();
 
     Ok(mailer)
+}
+
+// Send raw MIME email content
+async fn send_raw_email(
+    transport: &AsyncSmtpTransport<Tokio1Executor>,
+    smtp_config: &SmtpConfig,
+    to_email: &str,
+    subject: &str,
+    raw_body: &str,
+) -> Result<(), String> {
+    // Parse sender and recipient
+    let from = match &smtp_config.from_name {
+        Some(name) => format!("{} <{}>", name, smtp_config.from_email),
+        None => smtp_config.from_email.clone(),
+    };
+    let from = Mailbox::from_str(&from).map_err(|e| format!("Invalid from address: {}", e))?;
+
+    let to = Mailbox::from_str(to_email).map_err(|e| format!("Invalid to address: {}", e))?;
+
+    // Create message with raw body (already MIME formatted)
+    let message = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(subject)
+        .body(raw_body.to_string())
+        .map_err(|e| format!("Failed to build raw email: {}", e))?;
+
+    // Send the email
+    transport
+        .send(message)
+        .await
+        .map_err(|e| format!("Failed to send raw email: {}", e))?;
+
+    Ok(())
 }
 
 // Send a single email (your original function)
