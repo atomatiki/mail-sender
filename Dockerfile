@@ -20,7 +20,7 @@ RUN mkdir -p src && \
 RUN cargo build --release
 
 # Remove the dummy source (updated binary name)
-RUN rm ./target/release/deps/email_service* && \
+RUN rm ./target/release/deps/mail_sender* && \
     rm src/main.rs
 
 # Now copy the real source code
@@ -28,7 +28,7 @@ COPY src src/
 
 # Build the real application
 RUN cargo build --release && \
-    strip /app/target/release/email-service
+    strip /app/target/release/mail-sender
 
 # Runtime stage using distroless
 FROM gcr.io/distroless/cc-debian12
@@ -39,7 +39,7 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 WORKDIR /app
 
 # Copy binary from builder (updated binary name)
-COPY --from=builder /app/target/release/email-service .
+COPY --from=builder /app/target/release/mail-sender .
 
 # Set default environment variables
 ENV RUST_LOG=info
@@ -51,4 +51,4 @@ ENV ENABLE_SMTP_GATEWAY=false
 # Expose both HTTP API and SMTP gateway ports
 EXPOSE 4500 1025
 
-ENTRYPOINT ["./email-service"]
+ENTRYPOINT ["./mail-sender"]
