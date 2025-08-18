@@ -12,7 +12,7 @@ use std::{
     str::FromStr,
     thread,
 };
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -542,11 +542,12 @@ async fn send_raw_email(
 
     let to = Mailbox::from_str(to_email).map_err(|e| format!("Invalid to address: {}", e))?;
 
-    // Create message with raw body (already MIME formatted)
+    // Create message with raw MIME body content
     let message = Message::builder()
         .from(from)
         .to(to)
         .subject(subject)
+        .header(ContentType::parse("multipart/alternative").unwrap())
         .body(raw_body.to_string())
         .map_err(|e| format!("Failed to build raw email: {}", e))?;
 
