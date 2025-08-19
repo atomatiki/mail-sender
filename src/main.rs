@@ -255,7 +255,7 @@ fn handle_smtp_command(
             
             session.data = data;
             
-            // Send email using your existing functions
+            // Send email using the fixed raw email function
             match send_smtp_email(session) {
                 Ok(_) => {
                     write!(stream, "250 OK: Message accepted for delivery\r\n")?;
@@ -319,6 +319,10 @@ fn parse_rcpt_to(command: &str) -> Option<String> {
     None
 }
 
+// =============================================================================
+// FIXED SMTP EMAIL SENDING - SENDS RAW EMAIL AS-IS
+// =============================================================================
+
 fn send_smtp_email(session: &SmtpSession) -> Result<(), String> {
     // Get SMTP configuration from environment
     let smtp_config = SmtpConfig {
@@ -334,86 +338,260 @@ fn send_smtp_email(session: &SmtpSession) -> Result<(), String> {
         from_name: std::env::var("TARGET_SMTP_FROM_NAME").ok(),
     };
 
-    // Parse email content
-    let (subject, body) = parse_email_data(&session.data);
-    
     // Create runtime for async operations
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Runtime error: {}", e))?;
     
     rt.block_on(async {
-        // Create SMTP transport using your existing function
-        let smtp_transport = create_smtp_transport(&smtp_config).await?;
-
-        // Send to each recipient using your existing function
-        for to_email in &session.to {
-            // Check if this is already a MIME multipart message
-            if body.contains("------=_Part_") || body.contains("Content-Type: text/") {
-                // This is already a properly formatted MIME message, send it directly
-                send_raw_email(&smtp_transport, &smtp_config, to_email, &subject, &body).await?;
-            } else {
-                // This is plain content, use the normal email processing
-                let (text_body, html_body) = if body.trim_start().starts_with("<") || body.contains("<html") {
-                    (strip_html_tags(&body), Some(body.clone()))
-                } else {
-                    (body.clone(), None)
-                };
-                
-                let email_message = EmailMessage {
-                    to_email: to_email.clone(),
-                    to_name: None,
-                    subject: subject.clone(),
-                    text_body,
-                    html_body,
-                };
-
-                send_email(&smtp_transport, &smtp_config, &email_message).await?;
+        // For emails containing MIME boundaries or multipart content, use direct SMTP
+        if session.data.contains("MIME-Version:") || 
+           session.data.contains("Content-Type: multipart") ||
+           session.data.contains("boundary=") {
+            info!("📧 Detected multipart MIME email, using direct SMTP to preserve formatting");
+            
+            for to_email in &session.to {
+                match send_direct_smtp_email(&smtp_config, to_email, &session.data).await {
+                    Ok(_) => {
+                        info!("📧 Raw MIME email sent to {} via direct SMTP", to_email);
+                    }
+                    Err(e) => {
+                        error!("❌ Direct SMTP failed: {}, trying lettre fallback", e);
+                        // Fallback to lettre-based sending
+                        let smtp_transport = create_smtp_transport(&smtp_config).await?;
+                        send_raw_smtp_email(&smtp_transport, &smtp_config, to_email, &session.data).await?;
+                        info!("📧 Email sent to {} via lettre fallback", to_email);
+                    }
+                }
             }
-            info!("📧 Email sent to {} via {}", to_email, smtp_config.server);
+        } else {
+            // Regular email processing with lettre
+            let smtp_transport = create_smtp_transport(&smtp_config).await?;
+            for to_email in &session.to {
+                send_raw_smtp_email(&smtp_transport, &smtp_config, to_email, &session.data).await?;
+                info!("📧 Email sent to {} via lettre", to_email);
+            }
         }
         
         Ok::<(), String>(())
     })
 }
 
-fn strip_html_tags(html: &str) -> String {
-    // Simple HTML tag removal for plain text fallback
-    let mut result = String::new();
-    let mut inside_tag = false;
+// Direct SMTP sending that preserves complete MIME structure
+async fn send_direct_smtp_email(
+    smtp_config: &SmtpConfig,
+    to_email: &str,
+    raw_email_data: &str,
+) -> Result<(), String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpStream;
+    use base64::{Engine as _, engine::general_purpose};
     
-    for c in html.chars() {
-        match c {
-            '<' => inside_tag = true,
-            '>' => inside_tag = false,
-            _ if !inside_tag => result.push(c),
-            _ => {}
+    // Parse SMTP server and port
+    let server_parts: Vec<&str> = smtp_config.server.split(':').collect();
+    let host = server_parts[0];
+    let port: u16 = if server_parts.len() > 1 {
+        server_parts[1].parse().unwrap_or(587)
+    } else {
+        587
+    };
+    
+    // Connect to SMTP server
+    let mut stream = TcpStream::connect(format!("{}:{}", host, port))
+        .await
+        .map_err(|e| format!("Failed to connect to SMTP server: {}", e))?;
+    
+    // Split the stream for reading and writing
+    let (reader, mut writer) = stream.split();
+    let mut reader = BufReader::new(reader);
+    
+    // Read initial greeting
+    let mut response = String::new();
+    reader.read_line(&mut response).await.map_err(|e| format!("Failed to read greeting: {}", e))?;
+    
+    if !response.starts_with("220") {
+        return Err(format!("SMTP server rejected connection: {}", response));
+    }
+    
+    // Send EHLO
+    writer.write_all(format!("EHLO {}\r\n", host).as_bytes()).await.map_err(|e| format!("Failed to send EHLO: {}", e))?;
+    
+    // Read EHLO response
+    loop {
+        response.clear();
+        reader.read_line(&mut response).await.map_err(|e| format!("Failed to read EHLO response: {}", e))?;
+        if response.starts_with("250 ") {
+            break;
+        } else if !response.starts_with("250-") {
+            return Err(format!("SMTP server rejected EHLO: {}", response));
         }
     }
     
-    result.trim().to_string()
+    // Send AUTH LOGIN
+    writer.write_all(b"AUTH LOGIN\r\n").await.map_err(|e| format!("Failed to send AUTH: {}", e))?;
+    response.clear();
+    reader.read_line(&mut response).await.map_err(|e| format!("Failed to read AUTH response: {}", e))?;
+    
+    if !response.starts_with("334") {
+        return Err(format!("SMTP server rejected AUTH: {}", response));
+    }
+    
+    // Send username (base64 encoded)
+    let username_b64 = general_purpose::STANDARD.encode(&smtp_config.username);
+    writer.write_all(format!("{}\r\n", username_b64).as_bytes()).await.map_err(|e| format!("Failed to send username: {}", e))?;
+    response.clear();
+    reader.read_line(&mut response).await.map_err(|e| format!("Failed to read username response: {}", e))?;
+    
+    if !response.starts_with("334") {
+        return Err(format!("SMTP server rejected username: {}", response));
+    }
+    
+    // Send password (base64 encoded)
+    let password_b64 = general_purpose::STANDARD.encode(&smtp_config.password);
+    writer.write_all(format!("{}\r\n", password_b64).as_bytes()).await.map_err(|e| format!("Failed to send password: {}", e))?;
+    response.clear();
+    reader.read_line(&mut response).await.map_err(|e| format!("Failed to read password response: {}", e))?;
+    
+    if !response.starts_with("235") {
+        return Err(format!("SMTP authentication failed: {}", response));
+    }
+    
+    // Send MAIL FROM
+    writer.write_all(format!("MAIL FROM:<{}>\r\n", smtp_config.from_email).as_bytes()).await.map_err(|e| format!("Failed to send MAIL FROM: {}", e))?;
+    response.clear();
+    reader.read_line(&mut response).await.map_err(|e| format!("Failed to read MAIL FROM response: {}", e))?;
+    
+    if !response.starts_with("250") {
+        return Err(format!("SMTP server rejected MAIL FROM: {}", response));
+    }
+    
+    // Send RCPT TO
+    writer.write_all(format!("RCPT TO:<{}>\r\n", to_email).as_bytes()).await.map_err(|e| format!("Failed to send RCPT TO: {}", e))?;
+    response.clear();
+    reader.read_line(&mut response).await.map_err(|e| format!("Failed to read RCPT TO response: {}", e))?;
+    
+    if !response.starts_with("250") {
+        return Err(format!("SMTP server rejected RCPT TO: {}", response));
+    }
+    
+    // Send DATA
+    writer.write_all(b"DATA\r\n").await.map_err(|e| format!("Failed to send DATA: {}", e))?;
+    response.clear();
+    reader.read_line(&mut response).await.map_err(|e| format!("Failed to read DATA response: {}", e))?;
+    
+    if !response.starts_with("354") {
+        return Err(format!("SMTP server rejected DATA: {}", response));
+    }
+    
+    // Send the raw email data exactly as received
+    writer.write_all(raw_email_data.as_bytes()).await.map_err(|e| format!("Failed to send email data: {}", e))?;
+    writer.write_all(b"\r\n.\r\n").await.map_err(|e| format!("Failed to send email terminator: {}", e))?;
+    
+    response.clear();
+    reader.read_line(&mut response).await.map_err(|e| format!("Failed to read final response: {}", e))?;
+    
+    if !response.starts_with("250") {
+        return Err(format!("SMTP server rejected email: {}", response));
+    }
+    
+    // Send QUIT
+    writer.write_all(b"QUIT\r\n").await.map_err(|e| format!("Failed to send QUIT: {}", e))?;
+    
+    Ok(())
 }
 
-fn parse_email_data(data: &str) -> (String, String) {
-    let lines: Vec<&str> = data.lines().collect();
-    let mut subject = "No Subject".to_string();
-    let mut body_start = 0;
+// New function to send completely raw SMTP data preserving MIME structure
+async fn send_raw_smtp_email(
+    transport: &AsyncSmtpTransport<Tokio1Executor>,
+    smtp_config: &SmtpConfig,
+    to_email: &str,
+    raw_email_data: &str,
+) -> Result<(), String> {
+    use lettre::message::SinglePart;
+    
+    // Parse sender and recipient for SMTP envelope
+    let from = match &smtp_config.from_name {
+        Some(name) => format!("{} <{}>", name, smtp_config.from_email),
+        None => smtp_config.from_email.clone(),
+    };
+    let from = Mailbox::from_str(&from).map_err(|e| format!("Invalid from address: {}", e))?;
+    let to = Mailbox::from_str(to_email).map_err(|e| format!("Invalid to address: {}", e))?;
 
-    // Parse headers
-    for (i, line) in lines.iter().enumerate() {
-        if line.is_empty() {
-            body_start = i + 1;
-            break;
+    // Find where headers end and body starts
+    let header_body_split = raw_email_data.find("\n\n")
+        .or_else(|| raw_email_data.find("\r\n\r\n"))
+        .unwrap_or(0);
+    
+    let (headers_section, body_section) = if header_body_split > 0 {
+        (&raw_email_data[..header_body_split], &raw_email_data[header_body_split..])
+    } else {
+        // If no clear header/body split, treat entire content as body
+        ("", raw_email_data)
+    };
+
+    // Extract subject from headers for SMTP envelope
+    let subject = extract_subject_from_headers(headers_section).unwrap_or_else(|| "No Subject".to_string());
+
+    // Extract Content-Type from headers if present
+    let content_type = extract_content_type_from_headers(headers_section);
+
+    // Build message using SinglePart to avoid automatic encoding
+    let body_content = body_section.trim_start().to_string();
+    
+    // Create a SinglePart with the exact content and no automatic encoding
+    let single_part = if let Some(ct) = content_type {
+        if let Ok(parsed_ct) = ContentType::parse(&ct) {
+            SinglePart::builder()
+                .header(parsed_ct)
+                .body(body_content)
+        } else {
+            // Fallback to plain text if Content-Type parsing fails
+            SinglePart::plain(body_content)
         }
-        if line.to_lowercase().starts_with("subject:") {
-            subject = line[8..].trim().to_string();
+    } else {
+        // No Content-Type found, use plain
+        SinglePart::plain(body_content)
+    };
+
+    // Build the message with the SinglePart (no automatic encoding)
+    let message = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(&subject)
+        .singlepart(single_part)
+        .map_err(|e| format!("Failed to build raw MIME message: {}", e))?;
+
+    // Send the email
+    transport
+        .send(message)
+        .await
+        .map_err(|e| format!("Failed to send raw MIME email: {}", e))?;
+
+    Ok(())
+}
+
+// Helper function to extract Content-Type from email headers
+fn extract_content_type_from_headers(headers: &str) -> Option<String> {
+    for line in headers.lines() {
+        let line = line.trim();
+        if line.to_lowercase().starts_with("content-type:") {
+            return Some(line[13..].trim().to_string());
         }
     }
+    None
+}
 
-    let body = lines[body_start..].join("\n");
-    (subject, body)
+// Helper function to extract subject from email headers
+fn extract_subject_from_headers(headers: &str) -> Option<String> {
+    for line in headers.lines() {
+        let line = line.trim();
+        if line.to_lowercase().starts_with("subject:") {
+            return Some(line[8..].trim().to_string());
+        }
+    }
+    None
 }
 
 // =============================================================================
-// YOUR ORIGINAL EMAIL SERVICE CODE
+// YOUR ORIGINAL EMAIL SERVICE CODE (HTTP API)
 // =============================================================================
 
 // Request model
@@ -525,42 +703,7 @@ async fn create_smtp_transport(
     Ok(mailer)
 }
 
-// Send raw MIME email content
-async fn send_raw_email(
-    transport: &AsyncSmtpTransport<Tokio1Executor>,
-    smtp_config: &SmtpConfig,
-    to_email: &str,
-    subject: &str,
-    raw_body: &str,
-) -> Result<(), String> {
-    // Parse sender and recipient
-    let from = match &smtp_config.from_name {
-        Some(name) => format!("{} <{}>", name, smtp_config.from_email),
-        None => smtp_config.from_email.clone(),
-    };
-    let from = Mailbox::from_str(&from).map_err(|e| format!("Invalid from address: {}", e))?;
-
-    let to = Mailbox::from_str(to_email).map_err(|e| format!("Invalid to address: {}", e))?;
-
-    // Create message with raw MIME body content
-    let message = Message::builder()
-        .from(from)
-        .to(to)
-        .subject(subject)
-        .header(ContentType::parse("multipart/alternative").unwrap())
-        .body(raw_body.to_string())
-        .map_err(|e| format!("Failed to build raw email: {}", e))?;
-
-    // Send the email
-    transport
-        .send(message)
-        .await
-        .map_err(|e| format!("Failed to send raw email: {}", e))?;
-
-    Ok(())
-}
-
-// Send a single email (your original function)
+// Send a single email (your original function for HTTP API)
 async fn send_email(
     transport: &AsyncSmtpTransport<Tokio1Executor>,
     smtp_config: &SmtpConfig,
